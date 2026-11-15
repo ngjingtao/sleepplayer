@@ -6,11 +6,15 @@ name: build-apk
 #
 # Two ways to get the file, both without a local toolchain:
 #
-#   1. a permanent link that always points at the newest build
+#   1. permanent link, always the newest build, no login needed:
 #        .../releases/download/build-latest/sleepplayer.apk
-#   2. the Artifacts section of any individual run (needs a GitHub login)
+#   2. the Artifacts section of an individual run (needs a GitHub login)
 #
-# A `v*` tag additionally publishes a normal versioned release.
+# Deliberately minimal on third-party actions: only `checkout`, `setup-java`
+# and `upload-artifact`. The Android SDK comes from the runner image, Gradle is
+# a direct download, and releases are published with the preinstalled `gh` CLI.
+# That is one fewer thing to break than an action that has to keep up with the
+# runner image.
 
 on:
   push:
@@ -36,38 +40,60 @@ jobs:
           java-version: '17'
 
       - name: Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: SDK packages
         run: |
-          sdkmanager --install \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "platform-tools"
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::no Android SDK found (looked at $SDK)"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK"   >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "using SDK at $SDK"
+
+          SM="$(find "$SDK" -type f -name sdkmanager 2>/dev/null | head -n1)"
+          if [ -z "$SM" ]; then
+            echo "::error::sdkmanager not found under $SDK"
+            ls -la "$SDK" || true
+            exit 1
+          fi
+          echo "sdkmanager: $SM"
+
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          "$SM" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+          echo "platforms:   $(ls "$SDK/platforms" 2>/dev/null | tr '\n' ' ')"
+          echo "build-tools: $(ls "$SDK/build-tools" 2>/dev/null | tr '\n' ' ')"
 
       - name: Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+        run: |
+          set -euo pipefail
+          V=8.7
+          curl -sSL -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-${V}-bin.zip"
+          unzip -q /tmp/gradle.zip -d "$HOME"
+          echo "$HOME/gradle-${V}/bin" >> "$GITHUB_PATH"
+          "$HOME/gradle-${V}/bin/gradle" --version | head -5
 
-      # Runs on the JVM, no device: the sleep detector's scenarios and the
-      # protocol suite. Red here means the logic is wrong, which is worth
-      # knowing before installing anything.
+      # Everything below is tee'd into one log file. If the job fails, that file
+      # is committed so the failure is readable without API access to job logs.
       - name: Unit tests
         working-directory: android
-        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle :app:testDebugUnitTest --no-daemon --stacktrace 2>&1 \
+            | tee "$GITHUB_WORKSPACE/ci.log"
 
       - name: Build debug APK
         working-directory: android
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 \
+            | tee -a "$GITHUB_WORKSPACE/ci.log"
 
-      # A stable file name is the whole point: it makes the release asset URL
-      # constant, so the link below never changes between builds.
       - name: Collect the APK
         run: |
+          set -euo pipefail
           cp android/app/build/outputs/apk/debug/app-debug.apk sleepplayer.apk
           ls -lh sleepplayer.apk
-          echo "SHA $GITHUB_SHA"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,30 +102,39 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # Rolling release: always the same tag and asset name, so this link is
-      # permanent and needs no login to download.
       - name: Publish latest build
         if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-latest
-          name: Latest build
-          prerelease: true
-          make_latest: 'false'
-          overwrite_files: true
-          files: sleepplayer.apk
-          body: |
-            Auto-built from `${{ github.sha }}`.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release delete build-latest --yes --cleanup-tag \
+            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh release create build-latest sleepplayer.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Latest build" \
+            --notes "Auto-built from ${GITHUB_SHA}.
 
-            **Direct download** (no login, works in a phone browser):
-
-            https://github.com/${{ github.repository }}/releases/download/build-latest/sleepplayer.apk
-
-            Debug build, signed with the standard debug key: installable, not
-            publishable to an app store.
+          Direct download (no login, works in a phone browser):
+          https://github.com/${GITHUB_REPOSITORY}/releases/download/build-latest/sleepplayer.apk" \
+            --prerelease
 
       - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: sleepplayer.apk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" sleepplayer.apk \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" || true
+
+      # Debug loop: a failing build is only useful if the reason is readable.
+      - name: Commit the log when something failed
+        if: failure()
+        run: |
+          set -euo pipefail
+          [ -f ci.log ] || exit 0
+          git config user.name  "ci"
+          git config user.email "ci@localhost"
+          git add -f ci.log
+          git commit -m "ci: build log for ${GITHUB_SHA::7} [skip ci]" || exit 0
+          git push
