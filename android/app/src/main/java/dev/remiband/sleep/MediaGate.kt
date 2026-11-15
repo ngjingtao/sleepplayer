@@ -35,6 +35,14 @@ class MediaGate(
 
     private val handler = Handler(Looper.getMainLooper())
 
+    /**
+     * The missing-permission warning is emitted once, not once per tick.
+     *
+     * The service polls playback every 15 seconds; without this flag the log
+     * fills with the same sentence and the one line that matters scrolls away.
+     */
+    private var warnedNoAccess = false
+
     fun notificationAccessGranted(): Boolean {
         val enabled = Settings.Secure.getString(
             context.contentResolver,
@@ -50,8 +58,16 @@ class MediaGate(
     fun playingController(): MediaController? {
         val manager = sessionManager() ?: return null
         if (!notificationAccessGranted()) {
-            log("notification access not granted -- cannot see media sessions")
+            if (!warnedNoAccess) {
+                warnedNoAccess = true
+                log("notification access is NOT granted: cannot see or pause any player")
+                log("enable it at Settings > Apps > Special app access > Notification access")
+            }
             return null
+        }
+        if (warnedNoAccess) {
+            warnedNoAccess = false
+            log("notification access granted: media control is live")
         }
         val component = ComponentName(context, MediaNotificationListener::class.java)
         val sessions = try {
