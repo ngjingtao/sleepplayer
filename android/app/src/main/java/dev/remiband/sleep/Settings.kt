@@ -66,6 +66,11 @@ class Settings(context: Context) {
         get() = prefs.getString("hrSource", "ble") ?: "ble"
         set(value) = prefs.edit().putString("hrSource", value).apply()
 
+    /** Which package actually answered the Health Connect permission request. */
+    var hcProviderPackage: String
+        get() = prefs.getString("hcProvider", "") ?: ""
+        set(value) = prefs.edit().putString("hcProvider", value).apply()
+
     var useBand: Boolean
         get() = prefs.getBoolean("useBand", false)
         set(value) = prefs.edit().putBoolean("useBand", value).apply()

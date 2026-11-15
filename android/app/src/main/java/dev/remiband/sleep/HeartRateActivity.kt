@@ -69,8 +69,8 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
 
     private val healthSource by lazy { HealthConnectSource(this) }
 
-    private var hcProviderPackage: String? = null
-    private lateinit var hcPermissionLauncher: ActivityResultLauncher<Set<String>>
+    private var hcLaunchers: List<Pair<String, ActivityResultLauncher<Set<String>>>> = emptyList()
+    private var hcAttempt = 0
     private lateinit var blePermissionLauncher: ActivityResultLauncher<Array<String>>
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -106,34 +106,26 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
         // HealthConnectClient.getOrCreate() auto-detects one (it can already
         // read permissions), but the contract does not: it defaults to the Play
         // Store package, which does not exist on an Android 14 system module.
-        hcProviderPackage = HealthConnectSource.detectProviderPackage(this)
-        appendLog("HC provider: ${hcProviderPackage ?: "none detected"}")
         appendLog("HC candidates: ${HealthConnectSource.describeCandidates(this)}")
 
-        val contract = try {
-            if (hcProviderPackage != null) {
-                PermissionController.createRequestPermissionResultContract(hcProviderPackage!!)
-            } else {
-                PermissionController.createRequestPermissionResultContract()
-            }
-        } catch (t: Throwable) {
-            appendLog("cannot build the HC contract for $hcProviderPackage: ${t.message}")
-            PermissionController.createRequestPermissionResultContract()
-        }
-
-        hcPermissionLauncher = registerForActivityResult(contract) { granted ->
-            appendLog("Health Connect returned ${granted.size} permission(s): $granted")
-            if (granted.contains(healthSource.readPermission)) {
-                checkHealthConnect()
-            } else {
-                appendLog(
-                    "Health Connect returned nothing and showed no prompt. On Android 14 " +
-                        "Health Connect is a system module whose provider package differs from " +
-                        "the Play version this client defaults to, so the request resolves to " +
-                        "nothing. The BLE path does not need it -- use that."
-                )
+        // getSdkStatus(context, pkg) reports "available" for every candidate on
+        // Android 14 -- it checks the module, not the package -- so it cannot
+        // pick the right one. Instead each candidate gets its own launcher and
+        // they are tried in order: the system tells us which package actually
+        // answers, instead of us guessing.
+        val launchers = ArrayList<Pair<String, ActivityResultLauncher<Set<String>>>>()
+        for (pkg in HealthConnectSource.CANDIDATE_PACKAGES) {
+            try {
+                val launcher = registerForActivityResult(
+                    PermissionController.createRequestPermissionResultContract(pkg)
+                ) { granted -> onHcResult(pkg, granted) }
+                launchers.add(pkg to launcher)
+            } catch (t: Throwable) {
+                appendLog("no HC contract for $pkg: ${t.message}")
             }
         }
+        hcLaunchers = launchers
+        appendLog("HC launchers registered: ${launchers.map { it.first }}")
         appendLog("ready - tap Scan, pick the band, then Connect")
         if (settings.bandAddress.isNotBlank()) {
             addressField.setText(settings.bandAddress)
@@ -303,12 +295,43 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
             appendLog("Health Connect is not available on this device")
             return
         }
-        appendLog("requesting: ${healthSource.readPermission}")
-        try {
-            hcPermissionLauncher.launch(setOf(healthSource.readPermission))
-        } catch (t: Throwable) {
-            appendLog("permission request failed: ${t.message}")
+        if (hcLaunchers.isEmpty()) {
+            appendLog("no Health Connect provider accepted a contract on this device")
+            return
         }
+        hcAttempt = 0
+        launchNextHcRequest()
+    }
+
+    private fun launchNextHcRequest() {
+        if (hcAttempt >= hcLaunchers.size) {
+            appendLog(
+                "none of the ${hcLaunchers.size} candidate packages answered. " +
+                    "Health Connect cannot be granted on this build from the app side."
+            )
+            return
+        }
+        val (pkg, launcher) = hcLaunchers[hcAttempt]
+        appendLog("requesting via $pkg (${hcAttempt + 1}/${hcLaunchers.size})")
+        try {
+            launcher.launch(setOf(healthSource.readPermission))
+        } catch (t: Throwable) {
+            appendLog("launch failed for $pkg: ${t.message}")
+            hcAttempt++
+            launchNextHcRequest()
+        }
+    }
+
+    private fun onHcResult(pkg: String, granted: Set<String>) {
+        appendLog("$pkg returned ${granted.size}: $granted")
+        if (granted.contains(healthSource.readPermission)) {
+            appendLog("Health Connect granted via $pkg")
+            settings.hcProviderPackage = pkg
+            checkHealthConnect()
+            return
+        }
+        hcAttempt++
+        launchNextHcRequest()
     }
 
     private fun checkHealthConnect() {
