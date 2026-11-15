@@ -272,10 +272,12 @@ class SleepGuardActivity : Activity() {
         val gate = MediaGate(this) { }
         val granted = gate.notificationAccessGranted()
         accessView.text = if (granted) {
-            "notification access: granted - other apps' playback can be paused"
+            "notification access: GRANTED - other apps' playback can be paused"
         } else {
-            "notification access: NOT granted - only the media-key fallback will work"
+            "notification access: NOT GRANTED - nothing can be paused yet.\n" +
+                "Tap the button above, enable Sleep guard, then force-stop this app and reopen it."
         }
+        accessView.setTextColor(if (granted) 0xFF2E7D32.toInt() else 0xFFC62828.toInt())
     }
 
     private fun copyLog() {

@@ -1,11 +1,13 @@
 package dev.remiband.sleep
 
+import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
 import android.media.AudioManager
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -44,6 +46,24 @@ class MediaGate(
     private var warnedNoAccess = false
 
     fun notificationAccessGranted(): Boolean {
+        val component = ComponentName(context, MediaNotificationListener::class.java)
+
+        // Official API first. Reading the Settings.Secure string is the classic
+        // approach, but several OEM builds (MIUI/HyperOS among them) do not keep
+        // that value in the shape the assumption expects, so an app can look
+        // unauthorised while the system considers it authorised.
+        if (Build.VERSION.SDK_INT >= 27) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE)
+                as? NotificationManager
+            if (manager != null) {
+                return try {
+                    manager.isNotificationListenerAccessGranted(component)
+                } catch (t: Throwable) {
+                    false
+                }
+            }
+        }
+
         val enabled = Settings.Secure.getString(
             context.contentResolver,
             "enabled_notification_listeners",
