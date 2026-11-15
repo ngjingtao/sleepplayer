@@ -207,9 +207,27 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
             settings.heartRateSource = "ble"
         }
         sourceButton = button("source: ${settings.heartRateSource}") {
-            settings.heartRateSource = if (settings.heartRateSource == "ble") "auto" else "ble"
-            sourceButton.text = "source: ${settings.heartRateSource}"
-            appendLog("heart-rate source set to ${settings.heartRateSource}")
+            scope.launch {
+                val next = when (settings.heartRateSource) {
+                    "auto" -> "ble"
+                    "ble" -> "health_connect"
+                    else -> "auto"
+                }
+                // Offer Health Connect only once it can actually deliver:
+                // granting the permission first is one less confusing state.
+                if (next == "health_connect" &&
+                    !(healthSource.available() && healthSource.hasPermission())
+                ) {
+                    appendLog(
+                        "Health Connect is not granted yet -- staying on " +
+                            "${settings.heartRateSource} (grant it first)"
+                    )
+                    return@launch
+                }
+                settings.heartRateSource = next
+                sourceButton.text = "source: $next"
+                appendLog("heart-rate source set to $next")
+            }
         }
         root.addView(sourceButton)
 
