@@ -85,6 +85,10 @@ dependencies {
     //   unzip -p <aar> META-INF/com/android/build/gradle/aar-metadata.properties
     implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
 
+    // The Health Connect API is suspend-based, and coroutines are not exposed
+    // as an `api` dependency, so compiling against it needs these explicitly.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
     // Pure-JVM unit tests for the sleep detector. No Android, no device:
     //   ./gradlew :app:testDebugUnitTest
     testImplementation("junit:junit:4.13.2")
