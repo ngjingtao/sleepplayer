@@ -86,6 +86,10 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
         settings = Settings(this)
         ble = BleCentral(this, this)
 
+        // Build the views FIRST: anything that logs before this point would
+        // touch an uninitialised logView and crash the activity on entry.
+        setContentView(buildUi())
+
         blePermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { result ->
@@ -106,9 +110,14 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
         appendLog("HC provider: ${hcProviderPackage ?: "none detected"}")
         appendLog("HC candidates: ${HealthConnectSource.describeCandidates(this)}")
 
-        val contract = if (hcProviderPackage != null) {
-            PermissionController.createRequestPermissionResultContract(hcProviderPackage!!)
-        } else {
+        val contract = try {
+            if (hcProviderPackage != null) {
+                PermissionController.createRequestPermissionResultContract(hcProviderPackage!!)
+            } else {
+                PermissionController.createRequestPermissionResultContract()
+            }
+        } catch (t: Throwable) {
+            appendLog("cannot build the HC contract for $hcProviderPackage: ${t.message}")
             PermissionController.createRequestPermissionResultContract()
         }
 
@@ -125,7 +134,6 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
                 )
             }
         }
-        setContentView(buildUi())
         appendLog("ready - tap Scan, pick the band, then Connect")
         if (settings.bandAddress.isNotBlank()) {
             addressField.setText(settings.bandAddress)
@@ -560,6 +568,9 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
     }
 
     private fun renderLog() {
+        // Guard against logging before the view tree exists; a crash here is
+        // indistinguishable from a crash in anything else on this screen.
+        if (!this::logView.isInitialized) return
         logView.text = if (logBuffer.isEmpty()) "(no log yet)" else logBuffer.toString()
     }
 
