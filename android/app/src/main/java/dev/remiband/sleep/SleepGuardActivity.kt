@@ -124,6 +124,7 @@ class SleepGuardActivity : Activity() {
         root.addView(row(
             button("Start watching") { startWatching() },
             button("Stop") { stopWatching() },
+            button("Test pause") { testPause() },
         ))
 
         root.addView(row(
@@ -264,6 +265,21 @@ class SleepGuardActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
     }
 
+    /**
+     * Fade out over 3 seconds and pause, right now.
+     *
+     * Verifying "does the pause actually work" otherwise means waiting for the
+     * whole playback budget. This makes the feedback loop seconds long, and it
+     * exercises the same code path the service uses.
+     */
+    private fun testPause() {
+        val gate = MediaGate(this) { line -> SleepWatchService.record("test: $line") }
+        SleepWatchService.record("test: pause requested")
+        gate.pauseWithFade(3_000L) { app ->
+            SleepWatchService.record("test: finished (${app ?: "media key"})")
+        }
+    }
+
     private fun stopWatching() {
         startService(
             Intent(this, SleepWatchService::class.java).apply {
@@ -299,8 +315,9 @@ class SleepGuardActivity : Activity() {
         accessView.text = if (granted) {
             "notification access: GRANTED - other apps' playback can be paused"
         } else {
-            "notification access: NOT GRANTED - nothing can be paused yet.\n" +
-                "Tap the button above, enable Sleep guard, then force-stop this app and reopen it."
+            "notification access: NOT GRANTED - only media-key pausing works.\n" +
+                "If the toggle is greyed out: App info > menu (top right) > Allow restricted settings," +
+                " then enable it and force-stop this app."
         }
         accessView.setTextColor(if (granted) 0xFF2E7D32.toInt() else 0xFFC62828.toInt())
     }

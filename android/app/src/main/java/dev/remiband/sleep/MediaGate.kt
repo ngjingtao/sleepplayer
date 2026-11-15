@@ -107,29 +107,49 @@ class MediaGate(
      */
     fun pauseWithFade(totalMs: Long = 20_000L, onDone: (String?) -> Unit = {}) {
         val controller = playingController()
-
-        if (controller == null) {
-            log("no playing media session; falling back to a media key")
-            pauseByKey()
-            onDone(null)
-            return
-        }
-
-        val app = controller.packageName
+        val app = controller?.packageName
         val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val stream = AudioManager.STREAM_MUSIC
         val original = audio.getStreamVolume(stream)
 
+        if (controller == null) {
+            // No session visible (most often: notification access is blocked by
+            // Android's "restricted settings" for sideloaded apps). A media key
+            // needs no special access, so the pause can still happen -- we just
+            // cannot confirm what, if anything, was playing.
+            log("no media session visible; will fade, then send a media key")
+        }
+
+        fun finish() {
+            if (controller != null) {
+                try {
+                    controller.transportControls.pause()
+                    log("paused $app")
+                } catch (e: Exception) {
+                    log("transport pause failed (${e.message}); sending a media key")
+                    pauseByKey()
+                }
+            } else {
+                pauseByKey()
+            }
+            handler.postDelayed({
+                try {
+                    audio.setStreamVolume(stream, original, 0)
+                } catch (_: SecurityException) {
+                }
+            }, 4_000L)
+            onDone(app)
+        }
+
         if (totalMs <= 0L) {
-            pause(controller, audio, original, stream, app, onDone)
+            finish()
             return
         }
 
         val steps = 10
         val stepMs = (totalMs / steps).coerceAtLeast(150L)
         var remaining = steps
-
-        log("fading out over ${totalMs / 1000}s before pausing $app")
+        log("fading out over ${totalMs / 1000}s before pausing")
 
         fun step() {
             remaining--
@@ -137,39 +157,15 @@ class MediaGate(
             try {
                 audio.setStreamVolume(stream, level.coerceIn(0, original), 0)
             } catch (_: SecurityException) {
-                // Volume control refused (Do Not Disturb). Not fatal: still pause.
+                // Volume control refused (Do Not Disturb). Still pause.
             }
             if (remaining > 0) {
                 handler.postDelayed({ step() }, stepMs)
             } else {
-                pause(controller, audio, original, stream, app, onDone)
+                finish()
             }
         }
         step()
-    }
-
-    private fun pause(
-        controller: MediaController,
-        audio: AudioManager,
-        original: Int,
-        stream: Int,
-        app: String,
-        onDone: (String?) -> Unit,
-    ) {
-        try {
-            controller.transportControls.pause()
-            log("paused $app")
-        } catch (e: Exception) {
-            log("pause failed (${e.message}); trying a media key")
-            pauseByKey()
-        }
-        handler.postDelayed({
-            try {
-                audio.setStreamVolume(stream, original, 0)
-            } catch (_: SecurityException) {
-            }
-        }, 4_000L)
-        onDone(app)
     }
 
     /** Last resort for players that ignore transport controls. */

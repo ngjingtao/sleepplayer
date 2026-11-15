@@ -97,13 +97,27 @@ class SleepWatchService : Service(), BleCentral.Listener {
     private var targetMs = 45 * 60_000L
     private var fadeMs = 20_000L
     private var triggered = false
+    private var blind = false
 
     private val tick = object : Runnable {
         override fun run() {
             if (!running) return
             val now = SystemClock.elapsedRealtime()
 
-            val playing = media.isPlaying()
+            // Without notification access isPlaying() is always false, which
+            // used to mean the timer never advanced at all -- the app looked
+            // broken rather than degraded. Count wall time instead, and let the
+            // media key do the pausing.
+            val canSeeSessions = media.notificationAccessGranted()
+            if (canSeeSessions && blind) {
+                blind = false
+                log("notification access appeared; back to counting real playback")
+            }
+            val playing = if (canSeeSessions) media.isPlaying() else true
+            if (!canSeeSessions && !blind) {
+                blind = true
+                log("no notification access: counting wall time, will pause with a media key")
+            }
             if (playing) playMs += TICK_MS
 
             val d = detector
