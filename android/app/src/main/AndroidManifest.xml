@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Two permission regimes, selected by API level:
+
+        API <= 30 : BLUETOOTH + BLUETOOTH_ADMIN + ACCESS_FINE_LOCATION
+                    (scanning was gated behind location before Android 12)
+        API >= 31 : BLUETOOTH_SCAN + BLUETOOTH_CONNECT
+
+      maxSdkVersion on the legacy entries is what stops Android 12+ from
+      demanding location access for a scan. Getting this wrong is the most
+      common reason a BLE app "finds no devices" on a modern phone.
+    -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Foreground service: keeps the watchdog alive while you watch. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Partial wake lock: the CPU must stay awake to hold the BLE link when
+         the video app has the screen on but the device would otherwise idle. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Volume fade. Harmless if the platform ignores it. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:label="Sleep guard"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name=".sleep.SleepGuardActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".probe.ProbeActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:label="BLE probe"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!--
+          specialUse is the honest type here: this is not media playback (we do
+          not play anything) and not a connected-device service in the Play
+          policy sense. It is a personal watchdog, so the narrower claim is
+          less misleading than borrowing connectedDevice.
+        -->
+        <service
+            android:name=".sleep.SleepWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="watches for sleep onset and stops media playback" />
+        </service>
+
+        <!--
+          Unlocks MediaSessionManager.getActiveSessions. The service is empty on
+          purpose: it reads no notifications, it only satisfies the framework's
+          gate for media control. The user grants this once in Settings.
+        -->
+        <service
+            android:name=".sleep.MediaNotificationListener"
+            android:exported="true"
+            android:label="Sleep guard (media access)"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+    </application>
+
+</manifest>
