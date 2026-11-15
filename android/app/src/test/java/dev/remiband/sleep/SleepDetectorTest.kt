@@ -70,6 +70,32 @@ class SleepDetectorTest {
         assertTrue("fired too late: ${firedAt / minute} min", firedAt < 45 * minute)
     }
 
+    /**
+     * No band characteristic reports movement, so "stillness" would be a lie.
+     * What the detector actually guarantees without a motion signal is a
+     * warm-up: the baseline gets learned first, and only heart rate decides.
+     */
+    @Test
+    fun `a warm-up is required when no motion is reported`() {
+        val detector = SleepDetector()
+        detector.start(0L)
+
+        var t = 0L
+        while (t <= 2 * minute) {
+            detector.onHeartRate(t, 62)
+            detector.tick(t)
+            t += step
+        }
+        var fired = false
+        while (t <= 9 * minute) {
+            detector.onHeartRate(t, 50)
+            if (detector.tick(t)) fired = true
+            t += step
+        }
+
+        assertFalse("a deep drop inside the warm-up must not pause anything", fired)
+    }
+
     @Test
     fun `does not fire when heart rate rises again`() {
         val detector = SleepDetector()

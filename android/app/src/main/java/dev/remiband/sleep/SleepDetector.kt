@@ -33,8 +33,19 @@ class SleepDetector(private val config: Config = Config()) {
     data class Config(
         /** Quiet for this long and we start considering it. */
         val drowsyQuietMs: Long = 6 * 60_000L,
-        /** Quiet for this long before onset can be confirmed. */
+        /** Quiet for this long before onset can be confirmed (needs motion). */
         val sleepQuietMs: Long = 10 * 60_000L,
+        /**
+         * Warm-up when the device reports no motion at all.
+         *
+         * The heart-rate characteristic of a Mi Band exposes pulse and skin
+         * contact, not movement, so this app often has no stillness signal.
+         * Pretending otherwise would be a lie in the logs: the "quiet" counter
+         * would just be elapsed time. When no motion event has ever arrived,
+         * onset is judged from heart rate alone, gated behind this warm-up so
+         * the baseline has time to be learned.
+         */
+        val minSessionMs: Long = 10 * 60_000L,
         /** Conditions must hold continuously for this long. */
         val confirmMs: Long = 4 * 60_000L,
         /** Window at the start of the session used to learn the awake HR. */
@@ -79,6 +90,7 @@ class SleepDetector(private val config: Config = Config()) {
     private var conditionsMetSinceMs = -1L
     private var phase = Phase.AWAKE
     private var fired = false
+    private var motionEvents = 0
     private var reason = "not started"
 
     val isRunning: Boolean get() = startMs >= 0L
@@ -91,6 +103,7 @@ class SleepDetector(private val config: Config = Config()) {
         conditionsMetSinceMs = -1L
         phase = Phase.AWAKE
         fired = false
+        motionEvents = 0
         reason = "started; learning your awake heart rate"
         hr.clear()
     }
@@ -119,7 +132,10 @@ class SleepDetector(private val config: Config = Config()) {
      * [Config.wakeMotionWindowMs].
      */
     fun onMotion(nowMs: Long, level: Int) {
-        if (level >= 1 && nowMs > lastMotionMs) lastMotionMs = nowMs
+        if (level >= 1) {
+            motionEvents++
+            if (nowMs > lastMotionMs) lastMotionMs = nowMs
+        }
         if (level >= config.wakeMotionLevel && nowMs > lastWakeMotionMs) {
             lastWakeMotionMs = nowMs
             reason = "movement detected (level $level)"
@@ -144,6 +160,12 @@ class SleepDetector(private val config: Config = Config()) {
         prune(nowMs)
 
         val quiet = nowMs - maxOf(lastInteractionMs, lastMotionMs)
+        val hasMotion = motionEvents > 0
+        val elapsed = nowMs - startMs
+        // With a motion signal, "still" is real. Without one, the only honest
+        // statement is "the session has been running long enough".
+        val quietOk = if (hasMotion) quiet >= config.sleepQuietMs
+                      else elapsed >= config.minSessionMs
         val baseline = baselineHeartRate()
         val current = currentHeartRate(nowMs)
 
@@ -151,14 +173,15 @@ class SleepDetector(private val config: Config = Config()) {
         val hrRising = heartRateRising(nowMs, baseline)
         val motionOk = nowMs - lastWakeMotionMs >= config.wakeMotionWindowMs
 
-        val met = quiet >= config.sleepQuietMs && hrDropped && motionOk && !hrRising
+        val met = quietOk && hrDropped && motionOk && !hrRising
 
         if (met) {
             if (conditionsMetSinceMs < 0L) conditionsMetSinceMs = nowMs
             phase = Phase.DROWSY
             val held = nowMs - conditionsMetSinceMs
             reason = buildString {
-                append("quiet ${quiet / 60_000}m")
+                if (hasMotion) append("quiet ${quiet / 60_000}m")
+                else append("heart-rate only, ${elapsed / 60_000}m in")
                 if (current != null && baseline != null) append(", HR $current/$baseline")
                 append(", confirmed ${held / 60_000}/${config.confirmMs / 60_000}m")
             }
@@ -171,7 +194,9 @@ class SleepDetector(private val config: Config = Config()) {
         } else {
             conditionsMetSinceMs = -1L
             phase = if (quiet >= config.drowsyQuietMs) Phase.DROWSY else Phase.AWAKE
-            reason = explainNotMet(quiet, current, baseline, hrDropped, hrRising, motionOk, nowMs)
+            reason = explainNotMet(
+                quiet, elapsed, hasMotion, current, baseline, hrDropped, hrRising, motionOk, nowMs
+            )
         }
         return false
     }
@@ -251,6 +276,8 @@ class SleepDetector(private val config: Config = Config()) {
 
     private fun explainNotMet(
         quiet: Long,
+        elapsed: Long,
+        hasMotion: Boolean,
         current: Int?,
         baseline: Int?,
         hrDropped: Boolean,
@@ -258,6 +285,8 @@ class SleepDetector(private val config: Config = Config()) {
         motionOk: Boolean,
         nowMs: Long,
     ): String = when {
+        !hasMotion && elapsed < config.minSessionMs ->
+            "heart-rate only: warming up ${elapsed / 60_000}/${config.minSessionMs / 60_000}m"
         config.requireHeartRate && current == null ->
             "waiting for heart-rate data (band path unavailable)"
         hrRising && current != null && baseline != null ->
