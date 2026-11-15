@@ -69,6 +69,7 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
 
     private val healthSource by lazy { HealthConnectSource(this) }
 
+    private var hcProviderPackage: String? = null
     private lateinit var hcPermissionLauncher: ActivityResultLauncher<Set<String>>
     private lateinit var blePermissionLauncher: ActivityResultLauncher<Array<String>>
 
@@ -97,9 +98,21 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
             }
         }
 
-        hcPermissionLauncher = registerForActivityResult(
+        // The contract must target the provider the platform actually has.
+        // HealthConnectClient.getOrCreate() auto-detects one (it can already
+        // read permissions), but the contract does not: it defaults to the Play
+        // Store package, which does not exist on an Android 14 system module.
+        hcProviderPackage = HealthConnectSource.detectProviderPackage(this)
+        appendLog("HC provider: ${hcProviderPackage ?: "none detected"}")
+        appendLog("HC candidates: ${HealthConnectSource.describeCandidates(this)}")
+
+        val contract = if (hcProviderPackage != null) {
+            PermissionController.createRequestPermissionResultContract(hcProviderPackage!!)
+        } else {
             PermissionController.createRequestPermissionResultContract()
-        ) { granted ->
+        }
+
+        hcPermissionLauncher = registerForActivityResult(contract) { granted ->
             appendLog("Health Connect returned ${granted.size} permission(s): $granted")
             if (granted.contains(healthSource.readPermission)) {
                 checkHealthConnect()

@@ -46,7 +46,12 @@
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
 
     <queries>
+        <!-- Play Store Health Connect -->
         <package android:name="com.google.android.apps.healthdata" />
+        <!-- Android 14 built-in module (data provider) -->
+        <package android:name="com.android.healthfitness" />
+        <!-- Android 14 settings surface -->
+        <package android:name="com.android.healthconnect.controller" />
     </queries>
 
     <uses-feature

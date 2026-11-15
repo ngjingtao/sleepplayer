@@ -42,6 +42,43 @@ class HealthConnectSource(private val context: Context) {
         val origin: String,
     )
 
+    companion object {
+        /**
+         * Packages that may host Health Connect's data provider.
+         *
+         * The AndroidX client defaults to the Play Store app's package. Android
+         * 14 ships Health Connect as a system module under a different name, so
+         * that default resolves to nothing and the permission UI never opens --
+         * the request returns an empty set in milliseconds, with no prompt.
+         */
+        val CANDIDATE_PACKAGES = listOf(
+            "com.android.healthfitness",
+            "com.google.android.apps.healthdata",
+            "com.android.healthconnect.controller",
+        )
+
+        /** The first candidate the platform agrees is an available provider. */
+        fun detectProviderPackage(context: Context): String? =
+            CANDIDATE_PACKAGES.firstOrNull { pkg ->
+                runCatching {
+                    HealthConnectClient.getSdkStatus(context, pkg) ==
+                        HealthConnectClient.SDK_AVAILABLE
+                }.getOrDefault(false)
+            }
+
+        /** Every candidate with its status, for the log when detection fails. */
+        fun describeCandidates(context: Context): String = CANDIDATE_PACKAGES.joinToString(", ") {
+            val st = runCatching { HealthConnectClient.getSdkStatus(context, it) }.getOrNull()
+            val name = when (st) {
+                HealthConnectClient.SDK_AVAILABLE -> "available"
+                HealthConnectClient.SDK_UNAVAILABLE -> "unavailable"
+                HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> "needs-update"
+                else -> "status=$st"
+            }
+            "$it=$name"
+        }
+    }
+
     val readPermission: String = HealthPermission.getReadPermission(HeartRateRecord::class)
 
     private var client: HealthConnectClient? = null
