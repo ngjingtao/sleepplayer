@@ -13,3 +13,6 @@ android/local.properties
 .idea/
 *.iml
 .vscode/
+
+# agent/session memory -- not project content
+.memsearch/
