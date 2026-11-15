@@ -50,6 +50,8 @@ class BleCentral(
     private var pumping = false
     private var gatt: BluetoothGatt? = null
     private var scanCallback: ScanCallback? = null
+    private var lastAddress: String? = null
+    private var retryBudget = 1
 
     companion object {
         private const val OP_GAP_MS = 150L
@@ -141,6 +143,7 @@ class BleCentral(
         }
 
         close()
+        lastAddress = address
         listener.onState("connecting to $address")
         val newGatt = try {
             device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
@@ -288,12 +291,28 @@ class BleCentral(
 
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                retryBudget = 1
                 listener.onLog("connected (status ${gattStatusName(status)})")
                 listener.onConnected(g)
                 enqueue { g.requestMtu(MTU_REQUEST) }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 listener.onLog("disconnected (status ${gattStatusName(status)})")
                 if (gatt === g) gatt = null
+
+                // 133 immediately after connecting almost always means another
+                // central already holds the peripheral -- on a Xiaomi phone that
+                // is usually Mi Fitness keeping the band connected. Retry once,
+                // after saying so, because "reconnect" alone is not advice.
+                val address = lastAddress
+                if (status == 133 && retryBudget > 0 && address != null) {
+                    retryBudget--
+                    listener.onLog(
+                        "133 usually means another app holds the band (Mi Fitness). " +
+                            "Force-stop it, then retry -- or unpair the band first."
+                    )
+                    handler.postDelayed({ connect(address) }, 1_500L)
+                    return
+                }
                 listener.onDisconnected(status)
             }
         }
