@@ -20,6 +20,12 @@ import dev.remiband.ble.gattStatusName
 import dev.remiband.core.AuthSession
 import dev.remiband.core.Hex
 import dev.remiband.core.MibandProtocol
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.UUID
 import java.util.Date
@@ -99,6 +105,11 @@ class SleepWatchService : Service(), BleCentral.Listener {
     private var triggered = false
     private var blind = false
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var healthConnect: HealthConnectSource? = null
+    private var healthConnectActive = false
+    private var lastHealthPoll = 0L
+
     // Heart-rate stream bookkeeping. The point is to answer "did the band stop
     // sending while I slept?" from the log, instead of hoping it did not.
     private var hrSampleCount = 0
@@ -127,6 +138,10 @@ class SleepWatchService : Service(), BleCentral.Listener {
                 log("no notification access: counting wall time, will pause with a media key")
             }
             if (playing) playMs += TICK_MS
+            if (healthConnectActive && now - lastHealthPoll >= 60_000L) {
+                lastHealthPoll = now
+                pollHealthConnect()
+            }
             checkHeartRateGap(now)
 
             val d = detector
@@ -222,6 +237,7 @@ class SleepWatchService : Service(), BleCentral.Listener {
         hrUuid = null
         hrChar = null
         learnMode = false
+        healthConnectActive = false
         releaseWakeLock()
         status = "idle"
         detail = ""
@@ -233,20 +249,59 @@ class SleepWatchService : Service(), BleCentral.Listener {
 
     // ----------------------------------------------------------------- band
 
+    /**
+     * Pick a heart-rate source: Health Connect first, BLE (i.e. the band's own
+     * broadcast or proprietary channel) only if the health store cannot serve.
+     *
+     * Health Connect wins when it works because it needs no radio at all: no
+     * fight with Mi Fitness over the single BLE connection, no protocol work.
+     */
     private fun startBand() {
-        val address = settings.bandAddress
-        if (address.isBlank()) {
-            log("band mode requested but no address saved -- timer still active")
-            detail = "band: no address saved (timer only)"
-            return
-        }
         val d = SleepDetector()
         d.start(SystemClock.elapsedRealtime())
         detector = d
 
+        val source = HealthConnectSource(this)
+        healthConnect = source
+
+        scope.launch {
+            val usable = source.available() && source.hasPermission()
+            if (usable) {
+                healthConnectActive = true
+                log("heart rate source: Health Connect")
+                detail = "band: Health Connect"
+            } else {
+                log("Health Connect not usable (status ${source.status()})")
+                log("falling back to a direct BLE connection")
+                withContext(Dispatchers.Main) { startBle() }
+            }
+        }
+    }
+
+    private fun startBle() {
+        val address = settings.bandAddress
+        if (address.isBlank()) {
+            log("no band address saved -- timer still active")
+            detail = "band: no address saved (timer only)"
+            return
+        }
         val central = BleCentral(this, this)
         ble = central
         central.connect(address)
+    }
+
+    private fun pollHealthConnect() {
+        val source = healthConnect ?: return
+        scope.launch {
+            try {
+                for (sample in source.readRecent(10)) {
+                    note(sample.bpm, sample.elapsedMs)
+                    detail = "HR ${sample.bpm} bpm (Health Connect)"
+                }
+            } catch (t: Throwable) {
+                log("Health Connect read failed: ${t.message}")
+            }
+        }
     }
 
     override fun onLog(line: String) = log(line)
@@ -384,8 +439,8 @@ class SleepWatchService : Service(), BleCentral.Listener {
         }
     }
 
-    private fun note(bpm: Int) {
-        val now = SystemClock.elapsedRealtime()
+    private fun note(bpm: Int, at: Long = SystemClock.elapsedRealtime()) {
+        val now = at
         if (hrFirstAt == 0L) hrFirstAt = now
         if (hrLastAt > 0L) {
             val gap = now - hrLastAt
@@ -529,6 +584,7 @@ class SleepWatchService : Service(), BleCentral.Listener {
 
     override fun onDestroy() {
         running = false
+        scope.cancel()
         handler.removeCallbacks(tick)
         ble?.disconnect()
         releaseWakeLock()

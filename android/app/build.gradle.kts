@@ -35,7 +35,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.remiband.sleepguard"
-        minSdk = 23
+        minSdk = 26   // androidx.health.connect requires 26
         targetSdk = 34
         versionCode = 1
         versionName = "0.1"
@@ -75,6 +75,11 @@ android {
 // If you later want modern UI, adding AndroidX + Compose is a normal
 // migration; nothing in the BLE or protocol layers needs to change.
 dependencies {
+    // Health Connect: the phone's health store, which Mi Fitness may already be
+    // writing heart rate into. Reading it needs no BLE connection and no
+    // protocol work -- the trade is latency, since records land in batches.
+    implementation("androidx.health.connect:connect-client:1.1.0")
+
     // Pure-JVM unit tests for the sleep detector. No Android, no device:
     //   ./gradlew :app:testDebugUnitTest
     testImplementation("junit:junit:4.13.2")

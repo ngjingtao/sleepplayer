@@ -21,6 +21,11 @@ import dev.remiband.ble.BleCentral
 import dev.remiband.ble.gattStatusName
 import dev.remiband.core.Hex
 import dev.remiband.core.MibandProtocol
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,6 +63,7 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
     private lateinit var addressField: EditText
     private lateinit var offsetField: EditText
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var pendingBleAction: (() -> Unit)? = null
     private var hrUuid: UUID? = null
     private val lastLogged = HashMap<UUID, Long>()
@@ -75,6 +81,7 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
     }
 
     override fun onDestroy() {
+        scope.cancel()
         ble.close()
         super.onDestroy()
     }
@@ -138,6 +145,11 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(if (settings.heartRateOffset >= 0) settings.heartRateOffset.toString() else "")
         }
+        root.addView(row(
+            button("Check Health Connect") { checkHealthConnect() },
+            button("Open Health Connect") { openHealthConnect() },
+        ))
+
         root.addView(row(offsetField, button("Save offset") {
             settings.heartRateOffset = offsetField.text.toString().toIntOrNull() ?: -1
             appendLog("offset saved: ${settings.heartRateOffset}")
@@ -174,6 +186,38 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
         }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    // ------------------------------------------------------- health connect
+
+    /**
+     * Ask the health store what it actually holds.
+     *
+     * This is the decisive question for the Health Connect route: has anything
+     * written heart-rate records at all, how fresh is the newest one, and which
+     * app wrote it. No amount of reasoning substitutes for that answer.
+     */
+    private fun checkHealthConnect() {
+        appendLog("Health Connect: checking...")
+        statusView.text = "checking Health Connect..."
+        scope.launch {
+            val source = HealthConnectSource(this@HeartRateActivity)
+            val text = try {
+                source.describe()
+            } catch (t: Throwable) {
+                "Health Connect check failed: ${t.message}"
+            }
+            appendLog("HC: $text")
+            statusView.text = text
+        }
+    }
+
+    private fun openHealthConnect() {
+        try {
+            startActivity(android.content.Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS"))
+        } catch (t: Throwable) {
+            appendLog("cannot open Health Connect settings: ${t.message}")
+        }
+    }
 
     // ------------------------------------------------------------ connecting
 

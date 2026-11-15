@@ -40,6 +40,15 @@
     <!-- Volume fade. Harmless if the platform ignores it. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- Health Connect: read heart rate written by whichever health app owns it
+         (Mi Fitness, if it syncs). The user grants this inside the Health
+         Connect app itself, so no permission dialog of our own is needed. -->
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+    </queries>
+
     <uses-feature
         android:name="android.hardware.bluetooth_le"
         android:required="false" />
