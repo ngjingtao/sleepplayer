@@ -118,6 +118,17 @@ class SleepWatchService : Service(), BleCentral.Listener {
     private var hrLargestGapMs = 0L
     private var hrGapWarned = false
 
+    // Reconnect bookkeeping. A sleep session lasts hours, and the band drops
+    // idle links (or Mi Fitness reconnects and takes the slot), so a one-shot
+    // connect is not good enough.
+    private var reconnectAttempt = 0
+    private val reconnectAction = Runnable {
+        if (running && !triggered) {
+            log("reconnecting to the band")
+            startBle()
+        }
+    }
+
     private val tick = object : Runnable {
         override fun run() {
             if (!running) return
@@ -229,6 +240,7 @@ class SleepWatchService : Service(), BleCentral.Listener {
         }
         running = false
         handler.removeCallbacks(tick)
+        handler.removeCallbacks(reconnectAction)
         ble?.disconnect()
         ble = null
         detector?.stop()
@@ -339,12 +351,24 @@ class SleepWatchService : Service(), BleCentral.Listener {
     override fun onDisconnected(status: Int) {
         log("band disconnected")
         detail = "band disconnected (timer still active)"
+
+        if (!running || triggered) return
+
         // Auto mode: if the direct link never produced a single sample, the
         // health store may still have something usable.
         if (settings.heartRateSource == "auto" && hrSampleCount == 0 && !healthConnectActive) {
             log("never got a sample over BLE -- trying Health Connect")
             startHealthConnect()
+            return
         }
+
+        if (settings.heartRateSource == "health_connect") return
+
+        reconnectAttempt++
+        val delayMs = minOf(60_000L, 5_000L * reconnectAttempt)
+        log("reconnecting in ${delayMs / 1000}s (attempt $reconnectAttempt)")
+        handler.removeCallbacks(reconnectAction)
+        handler.postDelayed(reconnectAction, delayMs)
     }
 
     override fun onError(stage: String, status: Int) {
@@ -477,6 +501,7 @@ class SleepWatchService : Service(), BleCentral.Listener {
         hrLastAt = now
         hrSampleCount++
         hrGapWarned = false
+        reconnectAttempt = 0
         detail = "HR $bpm bpm"
         detector?.onHeartRate(now, bpm)
     }
@@ -613,6 +638,7 @@ class SleepWatchService : Service(), BleCentral.Listener {
         running = false
         scope.cancel()
         handler.removeCallbacks(tick)
+        handler.removeCallbacks(reconnectAction)
         ble?.disconnect()
         releaseWakeLock()
         super.onDestroy()
