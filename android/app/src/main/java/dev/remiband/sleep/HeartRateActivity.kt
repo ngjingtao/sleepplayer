@@ -18,6 +18,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.health.connect.client.PermissionController
 import dev.remiband.ble.BleCentral
 import dev.remiband.ble.gattStatusName
@@ -69,6 +70,7 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
     private val healthSource by lazy { HealthConnectSource(this) }
 
     private lateinit var hcPermissionLauncher: ActivityResultLauncher<Set<String>>
+    private lateinit var blePermissionLauncher: ActivityResultLauncher<Array<String>>
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var pendingBleAction: (() -> Unit)? = null
@@ -80,6 +82,18 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
         super.onCreate(savedInstanceState)
         settings = Settings(this)
         ble = BleCentral(this, this)
+
+        blePermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { result ->
+            val action = pendingBleAction
+            pendingBleAction = null
+            if (result.values.all { it }) {
+                action?.invoke()
+            } else {
+                appendLog("Bluetooth permission denied")
+            }
+        }
 
         hcPermissionLauncher = registerForActivityResult(
             PermissionController.createRequestPermissionResultContract()
@@ -308,21 +322,7 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
             return
         }
         pendingBleAction = action
-        requestPermissions(missing.toTypedArray(), BLE_CODE)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != BLE_CODE) return
-        val granted = grantResults.isNotEmpty() &&
-            grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-        val action = pendingBleAction
-        pendingBleAction = null
-        if (granted) action?.invoke() else appendLog("Bluetooth permission denied")
+        blePermissionLauncher.launch(missing.toTypedArray())
     }
 
     private fun scanForBand() {
