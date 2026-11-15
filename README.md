@@ -30,12 +30,19 @@ $ python3 -m remiband demo
       0.526s  band->app  AUTHENTICATED (10 03 01)
 ```
 
+**中文说明：[README.zh.md](README.zh.md)**
+
 ## Two halves
 
 | Half | What it does | Needs |
 |---|---|---|
 | `remiband/` (Python) | decodes captures, identifies the transport, diffs sessions | nothing but Python 3.9+ |
 | `android/` (Kotlin) | **Sleep guard**: fades audio out and pauses your video when you fall asleep | a phone; a band for the smart path |
+
+No JDK or Android SDK is available in the environment this was written in, so
+the APK is built by CI rather than locally:
+[.github/workflows/build-apk.yml](.github/workflows/build-apk.yml) builds and
+tests on every push and uploads an installable `sleepplayer-*.apk`.
 
 The app is the goal; the capture tooling is how its protocol facts get
 established. See [android/README.md](android/README.md).
