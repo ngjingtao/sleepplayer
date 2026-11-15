@@ -39,6 +39,33 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Generated once and committed, because the alternative is what people
+      # actually hit: a fresh debug keystore per CI run, a different signature
+      # every time, and Android refusing to install over the previous version.
+      # Needs keytool, hence the JDK step above. Skipped on pull requests so a
+      # fork cannot write to the repo.
+      - name: Ensure a stable signing key
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          KS=android/keystore/sleepplayer.jks
+          if [ -f "$KS" ]; then
+            echo "signing key already present"
+            exit 0
+          fi
+          echo "no signing key yet -- generating one and committing it"
+          mkdir -p android/keystore
+          keytool -genkeypair \
+            -keystore "$KS" \
+            -storepass sleepplayer -keypass sleepplayer \
+            -alias sleepplayer -keyalg RSA -keysize 2048 -validity 10950 \
+            -dname "CN=Sleepplayer, OU=personal, L=Kuala Lumpur, C=MY"
+          git config user.name  "ci"
+          git config user.email "ci@localhost"
+          git add -f "$KS"
+          git commit -m "ci: add a stable signing key so updates install over the previous build"
+          git push
+
       - name: Android SDK
         run: |
           set -euo pipefail
@@ -94,6 +121,8 @@ jobs:
           set -euo pipefail
           cp android/app/build/outputs/apk/debug/app-debug.apk sleepplayer.apk
           ls -lh sleepplayer.apk
+          echo "signer: $(unzip -p sleepplayer.apk META-INF/CERT.RSA | sha256sum | cut -c1-16)"
+          unzip -l sleepplayer.apk | grep -E 'META-INF/(CERT|.*\.SF)' || true
 
       - uses: actions/upload-artifact@v4
         with:

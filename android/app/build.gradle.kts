@@ -7,6 +7,32 @@ android {
     namespace = "dev.remiband"
     compileSdk = 34
 
+    // ------------------------------------------------------------------
+    // A STABLE signing key, so a new build replaces the installed app.
+    //
+    // Gradle otherwise generates a fresh debug keystore on every machine it
+    // builds on, and GitHub runners are disposable -- so every CI run produced
+    // a different certificate and Android refused the install ("app not
+    // installed"), forcing an uninstall that wipes settings. One committed key
+    // fixes that permanently.
+    //
+    // Trade-off, stated plainly: anyone who can write to this repo can sign a
+    // build that this app will accept as an update. That is acceptable for a
+    // personal sideloaded app and unacceptable for anything distributed; for
+    // distribution, move the keystore to a repository secret instead.
+    // ------------------------------------------------------------------
+    val stableKeystore = rootProject.file("keystore/sleepplayer.jks")
+    if (stableKeystore.exists()) {
+        signingConfigs {
+            create("stable") {
+                storeFile = stableKeystore
+                storePassword = "sleepplayer"
+                keyAlias = "sleepplayer"
+                keyPassword = "sleepplayer"
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "dev.remiband.sleepguard"
         minSdk = 23
@@ -16,8 +42,16 @@ android {
     }
 
     buildTypes {
-        release {
+        getByName("debug") {
+            if (stableKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("stable")
+            }
+        }
+        getByName("release") {
             isMinifyEnabled = false
+            if (stableKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("stable")
+            }
         }
     }
 
