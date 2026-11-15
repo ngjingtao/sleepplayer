@@ -264,6 +264,27 @@ class SleepWatchService : Service(), BleCentral.Listener {
         val source = HealthConnectSource(this)
         healthConnect = source
 
+        // Live data beats batched data: the band pushes every 1-2 s while
+        // Health Connect records can be minutes old. So "auto" is BLE first and
+        // Health Connect only when BLE cannot deliver.
+        when (settings.heartRateSource) {
+            "health_connect" -> {
+                log("heart rate source: Health Connect (forced)")
+                startHealthConnect()
+            }
+            "ble" -> {
+                log("heart rate source: direct BLE (forced)")
+                startBle()
+            }
+            else -> {
+                log("heart rate source: auto -- BLE first, Health Connect as fallback")
+                startBle()
+            }
+        }
+    }
+
+    private fun startHealthConnect() {
+        val source = healthConnect ?: HealthConnectSource(this).also { healthConnect = it }
         scope.launch {
             val usable = source.available() && source.hasPermission()
             if (usable) {
@@ -272,7 +293,6 @@ class SleepWatchService : Service(), BleCentral.Listener {
                 detail = "band: Health Connect"
             } else {
                 log("Health Connect not usable (status ${source.status()})")
-                log("falling back to a direct BLE connection")
                 withContext(Dispatchers.Main) { startBle() }
             }
         }
@@ -281,8 +301,9 @@ class SleepWatchService : Service(), BleCentral.Listener {
     private fun startBle() {
         val address = settings.bandAddress
         if (address.isBlank()) {
-            log("no band address saved -- timer still active")
+            log("no band address saved -- trying Health Connect instead")
             detail = "band: no address saved (timer only)"
+            startHealthConnect()
             return
         }
         val central = BleCentral(this, this)
@@ -318,6 +339,12 @@ class SleepWatchService : Service(), BleCentral.Listener {
     override fun onDisconnected(status: Int) {
         log("band disconnected")
         detail = "band disconnected (timer still active)"
+        // Auto mode: if the direct link never produced a single sample, the
+        // health store may still have something usable.
+        if (settings.heartRateSource == "auto" && hrSampleCount == 0 && !healthConnectActive) {
+            log("never got a sample over BLE -- trying Health Connect")
+            startHealthConnect()
+        }
     }
 
     override fun onError(stage: String, status: Int) {

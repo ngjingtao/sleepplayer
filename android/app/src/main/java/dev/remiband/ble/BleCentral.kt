@@ -394,6 +394,7 @@ fun gattStatusName(status: Int): String = when (status) {
     15 -> "insufficient encryption (pair/bond first)"
     17 -> "insufficient resources (slow the GATT queue)"
     18 -> "database out of sync"
+    19 -> "remote device closed the link (another connection took over?)"
     129 -> "GATT internal error (129)"
     133 -> "GATT_ERROR 133 -- stack lost the connection; reconnect"
     137 -> "GATT_ERROR 137 -- reconnect"

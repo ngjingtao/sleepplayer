@@ -55,6 +55,17 @@ class Settings(context: Context) {
         get() = prefs.getInt("heartRateOffset", -1)
         set(value) = prefs.edit().putInt("heartRateOffset", value).apply()
 
+    /**
+     * Heart-rate source: "auto" (BLE first, Health Connect as fallback),
+     * "ble" (direct only) or "health_connect" (health store only).
+     *
+     * BLE wins in "auto" because it is live: the band pushes every 1-2 seconds,
+     * while Health Connect records arrive in batches minutes apart.
+     */
+    var heartRateSource: String
+        get() = prefs.getString("hrSource", "auto") ?: "auto"
+        set(value) = prefs.edit().putString("hrSource", value).apply()
+
     var useBand: Boolean
         get() = prefs.getBoolean("useBand", false)
         set(value) = prefs.edit().putBoolean("useBand", value).apply()

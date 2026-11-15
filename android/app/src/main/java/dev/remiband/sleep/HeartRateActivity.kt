@@ -61,6 +61,7 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
     private lateinit var rawView: TextView
     private lateinit var logView: TextView
     private lateinit var addressField: EditText
+    private lateinit var sourceButton: Button
     private lateinit var offsetField: EditText
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -145,6 +146,17 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(if (settings.heartRateOffset >= 0) settings.heartRateOffset.toString() else "")
         }
+        sourceButton = button("source: ${settings.heartRateSource}") {
+            settings.heartRateSource = when (settings.heartRateSource) {
+                "auto" -> "ble"
+                "ble" -> "health_connect"
+                else -> "auto"
+            }
+            sourceButton.text = "source: ${settings.heartRateSource}"
+            appendLog("heart-rate source set to ${settings.heartRateSource}")
+        }
+        root.addView(sourceButton)
+
         root.addView(row(
             button("Check Health Connect") { checkHealthConnect() },
             button("Open Health Connect") { openHealthConnect() },
@@ -212,10 +224,31 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
     }
 
     private fun openHealthConnect() {
+        // Android 14 ships Health Connect in the system and uses the
+        // android.health.connect action; older setups use an app with the
+        // androidx action. Try both, then fall back to plain Settings.
+        val candidates = listOf(
+            "android.health.connect.action.HEALTH_HOME_SETTINGS",
+            "androidx.health.ACTION_HEALTH_CONNECT_SETTINGS",
+        )
+        for (action in candidates) {
+            val intent = android.content.Intent(action)
+            if (packageManager.resolveActivity(intent, 0) != null) {
+                try {
+                    startActivity(intent)
+                    appendLog("opened $action")
+                    return
+                } catch (t: Throwable) {
+                    appendLog("$action failed: ${t.message}")
+                }
+            } else {
+                appendLog("no activity for $action")
+            }
+        }
+        appendLog("Manual path: Settings > Security & privacy > Health Connect > App permissions")
         try {
-            startActivity(android.content.Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS"))
-        } catch (t: Throwable) {
-            appendLog("cannot open Health Connect settings: ${t.message}")
+            startActivity(android.content.Intent(android.provider.Settings.ACTION_SETTINGS))
+        } catch (_: Throwable) {
         }
     }
 
