@@ -62,6 +62,13 @@
         </activity>
 
         <activity
+            android:name=".sleep.HeartRateActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:label="Heart rate"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".probe.ProbeActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"

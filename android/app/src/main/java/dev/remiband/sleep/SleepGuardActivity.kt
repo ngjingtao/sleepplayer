@@ -129,6 +129,9 @@ class SleepGuardActivity : Activity() {
 
         root.addView(row(
             button("Grant notification access") { openNotificationAccess() },
+            button("Heart rate") {
+                startActivity(Intent(this, HeartRateActivity::class.java))
+            },
             button("BLE probe") {
                 startActivity(Intent(this, ProbeActivity::class.java))
             },
