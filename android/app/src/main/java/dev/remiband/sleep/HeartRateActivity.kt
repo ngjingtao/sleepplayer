@@ -213,7 +213,10 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
         }
         root.addView(sourceButton)
 
-        root.addView(button("Health Connect status") { checkHealthConnect() })
+        root.addView(row(
+            button("Grant HC access") { requestHealthConnect() },
+            button("HC status") { checkHealthConnect() },
+        ))
 
         root.addView(row(offsetField, button("Save offset") {
             settings.heartRateOffset = offsetField.text.toString().toIntOrNull() ?: -1
