@@ -1,7 +1,6 @@
 package dev.remiband.sleep
 
 import android.Manifest
-import android.app.Activity
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothManager
@@ -17,6 +16,9 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.health.connect.client.PermissionController
 import dev.remiband.ble.BleCentral
 import dev.remiband.ble.gattStatusName
 import dev.remiband.core.Hex
@@ -45,7 +47,7 @@ import java.util.UUID
  * plausible pulse -- so a vendor-specific format can be identified by eye
  * instead of by guesswork.
  */
-class HeartRateActivity : Activity(), BleCentral.Listener {
+class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
 
     private companion object {
         const val BLE_CODE = 41
@@ -64,6 +66,10 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
     private lateinit var sourceButton: Button
     private lateinit var offsetField: EditText
 
+    private val healthSource by lazy { HealthConnectSource(this) }
+
+    private lateinit var hcPermissionLauncher: ActivityResultLauncher<Set<String>>
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var pendingBleAction: (() -> Unit)? = null
     private var hrUuid: UUID? = null
@@ -74,6 +80,17 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
         super.onCreate(savedInstanceState)
         settings = Settings(this)
         ble = BleCentral(this, this)
+
+        hcPermissionLauncher = registerForActivityResult(
+            PermissionController.createRequestPermissionResultContract()
+        ) { granted ->
+            appendLog("Health Connect returned ${granted.size} permission(s): $granted")
+            if (granted.contains(healthSource.readPermission)) {
+                checkHealthConnect()
+            } else {
+                appendLog("heart-rate read permission was not granted")
+            }
+        }
         setContentView(buildUi())
         appendLog("ready - tap Scan, pick the band, then Connect")
         if (settings.bandAddress.isNotBlank()) {
@@ -158,8 +175,8 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
         root.addView(sourceButton)
 
         root.addView(row(
-            button("Check Health Connect") { checkHealthConnect() },
-            button("Open Health Connect") { openHealthConnect() },
+            button("Grant HC access") { requestHealthConnect() },
+            button("Check HC") { checkHealthConnect() },
         ))
 
         root.addView(row(offsetField, button("Save offset") {
@@ -208,6 +225,27 @@ class HeartRateActivity : Activity(), BleCentral.Listener {
      * written heart-rate records at all, how fresh is the newest one, and which
      * app wrote it. No amount of reasoning substitutes for that answer.
      */
+    /**
+     * Ask Health Connect for heart-rate read access.
+     *
+     * This is what makes the app appear in Health Connect's own permission
+     * list. Declaring the permission in the manifest only establishes that the
+     * app *may* ask; without this call the settings screen shows nothing to
+     * toggle.
+     */
+    private fun requestHealthConnect() {
+        if (!healthSource.available()) {
+            appendLog("Health Connect is not available on this device")
+            return
+        }
+        appendLog("requesting: ${healthSource.readPermission}")
+        try {
+            hcPermissionLauncher.launch(setOf(healthSource.readPermission))
+        } catch (t: Throwable) {
+            appendLog("permission request failed: ${t.message}")
+        }
+    }
+
     private fun checkHealthConnect() {
         appendLog("Health Connect: checking...")
         statusView.text = "checking Health Connect..."

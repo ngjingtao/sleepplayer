@@ -89,6 +89,12 @@ dependencies {
     // as an `api` dependency, so compiling against it needs these explicitly.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // Health Connect's permission flow is an ActivityResultContract, so the
+    // screen needs ComponentActivity. Declaring the permission in the manifest
+    // is not enough: Health Connect only lists apps that have *requested* it,
+    // which is why Sleep guard was absent from the list entirely.
+    implementation("androidx.activity:activity-ktx:1.9.0")
+
     // Pure-JVM unit tests for the sleep detector. No Android, no device:
     //   ./gradlew :app:testDebugUnitTest
     testImplementation("junit:junit:4.13.2")
