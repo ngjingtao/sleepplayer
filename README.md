@@ -1,4 +1,11 @@
-# REMiBand
+# Sleep player
+
+[![build-apk](https://github.com/ngjingtao/sleepplayer/actions/workflows/build-apk.yml/badge.svg)](https://github.com/ngjingtao/sleepplayer/actions/workflows/build-apk.yml)
+
+Always-current APK (no login needed):
+<https://github.com/ngjingtao/sleepplayer/releases/download/build-latest/sleepplayer.apk>
+
+## REMiBand
 
 A reverse-engineering workbench for the Xiaomi Mi Band BLE link.
 

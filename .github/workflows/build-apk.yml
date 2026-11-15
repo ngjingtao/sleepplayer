@@ -1,12 +1,16 @@
 name: build-apk
 
-# This exists because the project was developed somewhere with no JDK and no
-# Android SDK: the APK cannot be produced locally, so the build runs here and
-# the artifact is the thing you install.
+# The APK cannot be built in the environment this project was written in (no
+# JDK, no Android SDK), so the build runs here and the output is what you
+# install.
 #
-# Every push to main builds and tests the app. A `v*` tag additionally attaches
-# the APK to a GitHub Release, which can be downloaded without logging in --
-# convenient when the phone is doing the downloading.
+# Two ways to get the file, both without a local toolchain:
+#
+#   1. a permanent link that always points at the newest build
+#        .../releases/download/build-latest/sleepplayer.apk
+#   2. the Artifacts section of any individual run (needs a GitHub login)
+#
+# A `v*` tag additionally publishes a normal versioned release.
 
 on:
   push:
@@ -46,8 +50,8 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      # Runs on the JVM, no device: the sleep detector's eight scenarios and the
-      # protocol suite. A red run here means the logic is wrong, which is worth
+      # Runs on the JVM, no device: the sleep detector's scenarios and the
+      # protocol suite. Red here means the logic is wrong, which is worth
       # knowing before installing anything.
       - name: Unit tests
         working-directory: android
@@ -57,27 +61,45 @@ jobs:
         working-directory: android
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Name the artifact
+      # A stable file name is the whole point: it makes the release asset URL
+      # constant, so the link below never changes between builds.
+      - name: Collect the APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk \
-             "sleepplayer-${GITHUB_SHA::7}.apk"
-          ls -lh sleepplayer-*.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk sleepplayer.apk
+          ls -lh sleepplayer.apk
+          echo "SHA $GITHUB_SHA"
 
       - uses: actions/upload-artifact@v4
         with:
           name: sleepplayer-apk
-          path: sleepplayer-*.apk
+          path: sleepplayer.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Attach to release
+      # Rolling release: always the same tag and asset name, so this link is
+      # permanent and needs no login to download.
+      - name: Publish latest build
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-latest
+          name: Latest build
+          prerelease: true
+          make_latest: 'false'
+          overwrite_files: true
+          files: sleepplayer.apk
+          body: |
+            Auto-built from `${{ github.sha }}`.
+
+            **Direct download** (no login, works in a phone browser):
+
+            https://github.com/${{ github.repository }}/releases/download/build-latest/sleepplayer.apk
+
+            Debug build, signed with the standard debug key: installable, not
+            publishable to an app store.
+
+      - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: sleepplayer-*.apk
-          body: |
-            Sleep guard APK, built from ${{ github.sha }}.
-
-            Install: allow "install unknown apps" for your browser or file
-            manager, copy the APK to the phone, tap it. It is a debug build,
-            signed with the standard debug key -- installable, not publishable.
+          files: sleepplayer.apk

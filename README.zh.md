@@ -1,10 +1,22 @@
 # Sleep player / 睡眠守护
 
+[![build-apk](https://github.com/ngjingtao/sleepplayer/actions/workflows/build-apk.yml/badge.svg)](https://github.com/ngjingtao/sleepplayer/actions/workflows/build-apk.yml)
+
 睡前放 B 站 / YouTube / 抖音，睡着后手机自动把音量淡出并暂停播放。
 
 手机直连手环（BLE），不经过小米云、不依赖 Mi Fitness，所以**没有云往返延迟**。
 
 ---
+
+## 零、最快的下载地址（不需要登录）
+
+每次 push 到 `main`，CI 会把新 APK 覆盖到同一个 release 上，所以这个链接**永久有效**：
+
+```
+https://github.com/ngjingtao/sleepplayer/releases/download/build-latest/sleepplayer.apk
+```
+
+手机浏览器直接点开就能下。链接不存在（404）说明构建还没成功过，看下面第一节。
 
 ## 一、怎么拿到 APK
 
