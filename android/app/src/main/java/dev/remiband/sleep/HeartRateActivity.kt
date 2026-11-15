@@ -102,7 +102,12 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
             if (granted.contains(healthSource.readPermission)) {
                 checkHealthConnect()
             } else {
-                appendLog("heart-rate read permission was not granted")
+                appendLog(
+                    "Health Connect returned nothing and showed no prompt. On Android 14 " +
+                        "Health Connect is a system module whose provider package differs from " +
+                        "the Play version this client defaults to, so the request resolves to " +
+                        "nothing. The BLE path does not need it -- use that."
+                )
             }
         }
         setContentView(buildUi())

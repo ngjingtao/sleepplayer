@@ -63,7 +63,7 @@ class Settings(context: Context) {
      * while Health Connect records arrive in batches minutes apart.
      */
     var heartRateSource: String
-        get() = prefs.getString("hrSource", "auto") ?: "auto"
+        get() = prefs.getString("hrSource", "ble") ?: "ble"
         set(value) = prefs.edit().putString("hrSource", value).apply()
 
     var useBand: Boolean
