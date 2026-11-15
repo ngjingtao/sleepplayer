@@ -78,9 +78,12 @@ dependencies {
     // Health Connect: the phone's health store, which Mi Fitness may already be
     // writing heart rate into. Reading it needs no BLE connection and no
     // protocol work -- the trade is latency, since records land in batches.
-    // 1.1.0 requires AGP 8.9.1+ and compileSdk 36; this project is on AGP 8.5.2
-    // and compileSdk 34. 1.0.0 exposes the same API surface we use.
-    implementation("androidx.health.connect:connect-client:1.0.0")
+    // Version pinned deliberately: 1.1.0 stable (and rc/alphas after alpha07)
+    // demand compileSdk 36 and AGP 8.9.1+, while this project builds with AGP
+    // 8.5.2 / compileSdk 34. alpha07 is the newest release whose AAR metadata
+    // only requires compileSdk 34:
+    //   unzip -p <aar> META-INF/com/android/build/gradle/aar-metadata.properties
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
 
     // Pure-JVM unit tests for the sleep detector. No Android, no device:
     //   ./gradlew :app:testDebugUnitTest
