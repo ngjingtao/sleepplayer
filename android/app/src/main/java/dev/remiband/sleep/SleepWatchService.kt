@@ -99,6 +99,14 @@ class SleepWatchService : Service(), BleCentral.Listener {
     private var triggered = false
     private var blind = false
 
+    // Heart-rate stream bookkeeping. The point is to answer "did the band stop
+    // sending while I slept?" from the log, instead of hoping it did not.
+    private var hrSampleCount = 0
+    private var hrFirstAt = 0L
+    private var hrLastAt = 0L
+    private var hrLargestGapMs = 0L
+    private var hrGapWarned = false
+
     private val tick = object : Runnable {
         override fun run() {
             if (!running) return
@@ -119,6 +127,7 @@ class SleepWatchService : Service(), BleCentral.Listener {
                 log("no notification access: counting wall time, will pause with a media key")
             }
             if (playing) playMs += TICK_MS
+            checkHeartRateGap(now)
 
             val d = detector
             if (d != null) {
@@ -216,6 +225,7 @@ class SleepWatchService : Service(), BleCentral.Listener {
         releaseWakeLock()
         status = "idle"
         detail = ""
+        logHeartRateSummary()
         log("stopped")
         stopForegroundCompat()
         stopSelf()
@@ -375,8 +385,50 @@ class SleepWatchService : Service(), BleCentral.Listener {
     }
 
     private fun note(bpm: Int) {
+        val now = SystemClock.elapsedRealtime()
+        if (hrFirstAt == 0L) hrFirstAt = now
+        if (hrLastAt > 0L) {
+            val gap = now - hrLastAt
+            if (gap > hrLargestGapMs) hrLargestGapMs = gap
+            if (gap > 60_000L) log("heart-rate stream back after a ${gap / 1000}s gap")
+        }
+        hrLastAt = now
+        hrSampleCount++
+        hrGapWarned = false
         detail = "HR $bpm bpm"
-        detector?.onHeartRate(SystemClock.elapsedRealtime(), bpm)
+        detector?.onHeartRate(now, bpm)
+    }
+
+    /**
+     * Say it out loud when the heart-rate stream stops.
+     *
+     * Broadcast heart rate is not guaranteed to survive the transition into
+     * sleep, and a silent stop would look exactly like "the detector thinks I
+     * am awake". Logging it turns an invisible failure into a finding -- and
+     * the timer still guarantees the video stops either way.
+     */
+    private fun checkHeartRateGap(now: Long) {
+        if (hrLastAt <= 0L || hrGapWarned) return
+        val silentFor = now - hrLastAt
+        if (silentFor > 180_000L) {
+            hrGapWarned = true
+            log("heart-rate stream lost ${silentFor / 60_000} min ago -- timer still protects you")
+            detail = "band: heart rate lost (${silentFor / 60_000}m) - timer only"
+        }
+    }
+
+    private fun logHeartRateSummary() {
+        if (hrSampleCount == 0) {
+            log("heart-rate summary: no samples received at all")
+            return
+        }
+        val first = (hrFirstAt / 60_000) % (24 * 60)
+        val last = (hrLastAt / 60_000) % (24 * 60)
+        log(
+            "heart-rate summary: $hrSampleCount samples, " +
+                "${first / 60}h${first % 60}m -> ${last / 60}h${last % 60}m uptime, " +
+                "largest gap ${hrLargestGapMs / 1000}s"
+        )
     }
 
     private fun pushAuthStep() {
