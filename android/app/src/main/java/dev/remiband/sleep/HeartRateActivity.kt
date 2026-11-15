@@ -74,6 +74,8 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var pendingBleAction: (() -> Unit)? = null
+    private var retryCount = 0
+    private var closing = false
     private var hrUuid: UUID? = null
     private val lastLogged = HashMap<UUID, Long>()
     private val logBuffer = StringBuilder()
@@ -118,6 +120,8 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
     }
 
     override fun onDestroy() {
+        closing = true
+        handler.removeCallbacksAndMessages(null)
         scope.cancel()
         ble.close()
         super.onDestroy()
@@ -182,21 +186,21 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(if (settings.heartRateOffset >= 0) settings.heartRateOffset.toString() else "")
         }
+        // Health Connect is confirmed unusable on Android 14 here (the
+        // permission contract resolves to nothing), so offering it in a cycle
+        // is a trap: pick it and nothing ever connects. Only the two working
+        // states are offered.
+        if (settings.heartRateSource == "health_connect") {
+            settings.heartRateSource = "ble"
+        }
         sourceButton = button("source: ${settings.heartRateSource}") {
-            settings.heartRateSource = when (settings.heartRateSource) {
-                "auto" -> "ble"
-                "ble" -> "health_connect"
-                else -> "auto"
-            }
+            settings.heartRateSource = if (settings.heartRateSource == "ble") "auto" else "ble"
             sourceButton.text = "source: ${settings.heartRateSource}"
             appendLog("heart-rate source set to ${settings.heartRateSource}")
         }
         root.addView(sourceButton)
 
-        root.addView(row(
-            button("Grant HC access") { requestHealthConnect() },
-            button("Check HC") { checkHealthConnect() },
-        ))
+        root.addView(button("Health Connect status") { checkHealthConnect() })
 
         root.addView(row(offsetField, button("Save offset") {
             settings.heartRateOffset = offsetField.text.toString().toIntOrNull() ?: -1
@@ -383,6 +387,17 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
 
     private fun connect() {
         withPermission {
+            // The foreground service holds its own BLE connection. The band
+            // accepts one central, so two of ours would fight and both would
+            // look broken. Refuse instead of failing mysteriously.
+            if (SleepWatchService.running) {
+                statusView.text = "stop the sleep service first"
+                appendLog(
+                    "the sleep service is running and already owns the band -- " +
+                        "stop it (home screen -> Stop) before connecting here"
+                )
+                return@withPermission
+            }
             val address = addressField.text.toString().trim()
             if (address.isBlank()) {
                 appendLog("scan and pick a band first")
@@ -405,14 +420,25 @@ class HeartRateActivity : ComponentActivity(), BleCentral.Listener {
     }
 
     override fun onConnected(gatt: BluetoothGatt) {
+        retryCount = 0
         statusView.text = "connected"
         appendLog("connected")
     }
 
     override fun onDisconnected(status: Int) {
-        statusView.text = "disconnected"
+        statusView.text = "disconnected (status $status)"
         bpmView.text = "--"
         hrUuid = null
+
+        // A drop right after "connecting" usually means the band is still held
+        // by another app (Mi Fitness). Retry a few times rather than making the
+        // user mash the button.
+        if (retryCount < 3 && addressField.text.isNotBlank() && !closing) {
+            retryCount++
+            val delay = 2_000L * retryCount
+            appendLog("retrying in ${delay / 1000}s (attempt $retryCount/3)")
+            handler.postDelayed({ if (!closing) connect() }, delay)
+        }
     }
 
     override fun onError(stage: String, status: Int) {
