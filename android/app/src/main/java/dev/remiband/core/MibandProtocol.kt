@@ -26,6 +26,15 @@ object MibandProtocol {
 
     val CONTROL_POINT: UUID = UUID.fromString("0000ff05-0000-1000-8000-00805f9b34fb")
     val NOTIFY_CHAR: UUID = UUID.fromString("0000ff03-0000-1000-8000-00805f9b34fb")
+    /** Standard GATT Heart Rate service and measurement.
+     *
+     * Many bands do not expose these -- the Mi Band family normally keeps heart
+     * rate on a vendor characteristic -- but when a device *does* expose them
+     * the format is defined by the spec, so this is free correctness: no
+     * guessing, no byte-offset setting. */
+    val HR_SERVICE: UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
+    val HR_MEASUREMENT: UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
+
     val HEART_RATE_CONTROL: UUID = UUID.fromString("0000ff11-0000-1000-8000-00805f9b34fb")
     val HEART_RATE_DATA: UUID = UUID.fromString("0000ff12-0000-1000-8000-00805f9b34fb")
 
@@ -125,6 +134,30 @@ object MibandProtocol {
         return chunks
     }
 
+    // ------------------------------------------------------- heart rate decode
+
+    /**
+     * Decode a standard GATT Heart Rate Measurement (0x2A37).
+     *
+     * Byte 0 is a flags field; bit 0 selects an 8- or 16-bit bpm that follows.
+     * Returning null for implausible values is deliberate: a band that reports
+     * 0 while no sensor contact is established must not be read as "bpm 0,
+     * therefore deeply asleep".
+     */
+    fun decodeHeartRateMeasurement(value: ByteArray): Int? {
+        if (value.isEmpty()) return null
+        val flags = value[0].toInt() and 0xFF
+        val wide = (flags and 0x01) != 0
+        return if (!wide) {
+            if (value.size < 2) return null
+            (value[1].toInt() and 0xFF).takeIf { it in 25..250 }
+        } else {
+            if (value.size < 3) return null
+            val bpm = (value[1].toInt() and 0xFF) or ((value[2].toInt() and 0xFF) shl 8)
+            bpm.takeIf { it in 25..250 }
+        }
+    }
+
     // ----------------------------------------------------------------- names
 
     fun isXiaomi(uuid: UUID): Boolean =
@@ -134,6 +167,8 @@ object MibandProtocol {
         AUTH_UUID -> "mi auth"
         CONTROL_POINT -> "ff05 control point"
         NOTIFY_CHAR -> "ff03 notification"
+        HR_SERVICE -> "180d heart rate (standard)"
+        HR_MEASUREMENT -> "2a37 hr measurement (standard)"
         HEART_RATE_CONTROL -> "ff11 heart-rate control"
         HEART_RATE_DATA -> "ff12 heart-rate data"
         CCCD_UUID -> "2902 CCCD"

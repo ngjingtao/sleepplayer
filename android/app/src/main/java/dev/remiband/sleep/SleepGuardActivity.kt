@@ -1,6 +1,11 @@
 package dev.remiband.sleep
 
 import android.Manifest
+import android.app.AlertDialog
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.content.Context
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -27,8 +32,13 @@ import dev.remiband.probe.ProbeActivity
  */
 class SleepGuardActivity : Activity() {
 
+    private companion object {
+        const val BLE_REQUEST_CODE = 31
+    }
+
     private lateinit var settings: Settings
     private val handler = Handler(Looper.getMainLooper())
+    private var pendingBleAction: (() -> Unit)? = null
 
     private lateinit var statusView: TextView
     private lateinit var reasonView: TextView
@@ -137,9 +147,12 @@ class SleepGuardActivity : Activity() {
         root.addView(useBandBox)
 
         addressField = edit(settings.bandAddress, text = true).apply {
-            hint = "band address (from the probe screen)"
+            hint = "band address (or use Scan)"
         }
-        root.addView(addressField)
+        root.addView(row(
+            addressField,
+            button("Scan band") { scanForBand() },
+        ))
 
         keyField = edit(settings.authKey, text = true).apply {
             hint = "16-byte auth key, hex (optional)"
@@ -230,6 +243,18 @@ class SleepGuardActivity : Activity() {
 
     private fun startWatching() {
         saveSettings()
+        if (useBandBox.isChecked) {
+            if (settings.bandAddress.isBlank()) {
+                toast("band mode needs a device address - tap Scan band first")
+                return
+            }
+            ensureBlePermissions { launchService() }
+        } else {
+            launchService()
+        }
+    }
+
+    private fun launchService() {
         val intent = Intent(this, SleepWatchService::class.java).apply {
             action = SleepWatchService.ACTION_START
             putExtra(SleepWatchService.EXTRA_USE_BAND, useBandBox.isChecked)
@@ -288,6 +313,106 @@ class SleepGuardActivity : Activity() {
                 SleepWatchService.snapshotLog().joinToString("\n"),
             )
         )
+    }
+
+    // -------------------------------------------------------------- bluetooth
+
+    private fun blePermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= 31) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    private fun ensureBlePermissions(action: () -> Unit) {
+        val missing = blePermissions().filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            action()
+            return
+        }
+        pendingBleAction = action
+        requestPermissions(missing.toTypedArray(), BLE_REQUEST_CODE)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != BLE_REQUEST_CODE) return
+        val granted = grantResults.isNotEmpty() &&
+            grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+        val action = pendingBleAction
+        pendingBleAction = null
+        if (granted) {
+            action?.invoke()
+        } else {
+            toast("Bluetooth permission denied - the band cannot be read")
+        }
+    }
+
+    private fun scanForBand() {
+        ensureBlePermissions {
+            val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+            if (adapter == null || !adapter.isEnabled) {
+                toast("turn Bluetooth on first")
+                return@ensureBlePermissions
+            }
+            val scanner = adapter.bluetoothLeScanner
+            if (scanner == null) {
+                toast("this phone has no LE scanner")
+                return@ensureBlePermissions
+            }
+
+            toast("scanning 10s...")
+            val found = LinkedHashMap<String, String>()
+            val callback = object : ScanCallback() {
+                override fun onScanResult(callbackType: Int, result: ScanResult) {
+                    val name = try {
+                        result.device.name ?: result.scanRecord?.deviceName
+                    } catch (e: SecurityException) {
+                        null
+                    } ?: "(unnamed)"
+                    found[result.device.address] = name
+                }
+            }
+            scanner.startScan(callback)
+            handler.postDelayed({
+                try {
+                    scanner.stopScan(callback)
+                } catch (_: Exception) {
+                }
+                showDeviceChooser(found)
+            }, 10_000L)
+        }
+    }
+
+    private fun showDeviceChooser(found: Map<String, String>) {
+        if (found.isEmpty()) {
+            toast("no devices found - is the band awake and nearby?")
+            return
+        }
+        val entries = found.entries.toList()
+        val labels = entries.map { "${it.value}\n${it.key}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Pick your band")
+            .setItems(labels) { _, which ->
+                val (address, name) = entries[which]
+                addressField.setText(address)
+                settings.bandAddress = address
+                useBandBox.isChecked = true
+                settings.useBand = true
+                toast("selected $name")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun toast(message: String) {
+        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

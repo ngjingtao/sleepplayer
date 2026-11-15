@@ -248,16 +248,27 @@ class SleepWatchService : Service(), BleCentral.Listener {
     override fun onServicesReady(gatt: BluetoothGatt) {
         log("discovered ${gatt.services.size} services")
 
-        val wanted = runCatching { UUID.fromString(settings.heartRateUuid.trim()) }.getOrNull()
-        val hr = wanted?.let { ble?.characteristic(gatt, it) }
+        val configured = runCatching { UUID.fromString(settings.heartRateUuid.trim()) }.getOrNull()
+        val candidates = listOfNotNull(
+            configured,
+            MibandProtocol.HR_MEASUREMENT,   // standard, self-describing
+            MibandProtocol.HEART_RATE_DATA,  // classic Mi Band ff12
+        )
+        val hr = candidates.firstNotNullOfOrNull { ble?.characteristic(gatt, it) }
+
         if (hr != null) {
             hrChar = hr
             hrUuid = hr.uuid
             ble?.subscribe(hr)
             log("subscribed to heart rate on ${MibandProtocol.uuidLabel(hr.uuid)}")
+            if (hr.uuid == MibandProtocol.HR_MEASUREMENT) {
+                log("standard heart-rate format: no byte offset needed")
+            } else {
+                log("vendor characteristic: byte offset must be configured")
+            }
         } else {
-            log("no characteristic at ${settings.heartRateUuid} -- entering learn mode")
-            detail = "band: learn mode (no heart-rate characteristic found)"
+            log("no heart-rate characteristic found (tried $candidates)")
+            detail = "band: learn mode (no heart-rate characteristic)"
             subscribeAllNotify(gatt)
         }
 
@@ -325,6 +336,16 @@ class SleepWatchService : Service(), BleCentral.Listener {
     }
 
     private fun feedHeartRate(value: ByteArray) {
+        if (hrUuid == MibandProtocol.HR_MEASUREMENT) {
+            val bpm = MibandProtocol.decodeHeartRateMeasurement(value)
+            if (bpm == null) {
+                log("not a parsable standard heart-rate measurement")
+                return
+            }
+            note(bpm)
+            return
+        }
+
         val offset = settings.heartRateOffset
         if (offset < 0) {
             log("heart-rate offset is -1: log only, not feeding the detector")
@@ -333,10 +354,15 @@ class SleepWatchService : Service(), BleCentral.Listener {
         if (offset >= value.size) return
         val bpm = value[offset].toInt() and 0xFF
         if (bpm in 25..250) {
-            detector?.onHeartRate(SystemClock.elapsedRealtime(), bpm)
+            note(bpm)
         } else {
             log("byte@$offset = $bpm is not a plausible bpm; offset likely wrong")
         }
+    }
+
+    private fun note(bpm: Int) {
+        detail = "HR $bpm bpm"
+        detector?.onHeartRate(SystemClock.elapsedRealtime(), bpm)
     }
 
     private fun pushAuthStep() {

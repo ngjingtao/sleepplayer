@@ -113,6 +113,28 @@ class ProtocolTest {
     }
 
     @Test
+    fun `standard heart rate uses an 8-bit value by default`() {
+        // flags 0x00: bit0 clear -> single byte bpm follows
+        assertEquals(72, MibandProtocol.decodeHeartRateMeasurement(byteArrayOf(0x00, 72)))
+    }
+
+    @Test
+    fun `standard heart rate honours the 16-bit flag`() {
+        // flags 0x01: bit0 set -> little-endian uint16 follows
+        val wide = byteArrayOf(0x01, 0x40, 0x00)
+        assertEquals(64, MibandProtocol.decodeHeartRateMeasurement(wide))
+    }
+
+    @Test
+    fun `standard heart rate rejects impossible values`() {
+        // 0 bpm means "no sensor contact", not a very good night's sleep
+        assertNull(MibandProtocol.decodeHeartRateMeasurement(byteArrayOf(0x00, 0)))
+        assertNull(MibandProtocol.decodeHeartRateMeasurement(byteArrayOf(0x00)))
+        assertNull(MibandProtocol.decodeHeartRateMeasurement(ByteArray(0)))
+        assertNull(MibandProtocol.decodeHeartRateMeasurement(byteArrayOf(0x01, 0x40)))
+    }
+
+    @Test
     fun `auth state machine reaches authenticated`() {
         val key = ByteArray(16) { it.toByte() }
         val nonce = Hex.decode("00112233445566778899aabbccddeeff")!!
